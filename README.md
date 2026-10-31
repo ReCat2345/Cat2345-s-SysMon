@@ -2,8 +2,6 @@
 
 一个依赖很少（Python + psutil）的服务器监控工具：后端采集 CPU、内存、磁盘、GPU、网络指标，前端是 Material Design 3 风格的网页面板。访客打开网页即可查看面板，只有修改设置才需要管理员登录；所有指标只在本机采集，不上传任何数据。
 
-vibe coding by deepseek v4 flash，主要是没有我自己满意的系统监控工具，所以就随手写的这玩意，readme也是ai写的，整体下来依然有不好的地方所以求大佬轻喷（
-
 ## 功能
 
 - **五项指标**：CPU（整体 / 每核 / 频率 / 温度 / 负载）、内存（含 Swap）、磁盘（分区占用 / 读写速率）、GPU（利用率 / 显存 / 温度 / 功耗）、网络（上下行速率 / 累计流量）。
@@ -57,6 +55,8 @@ chmod +x sysmon.sh
 ./sysmon.sh restart
 ./sysmon.sh stop
 ```
+
+> 如果提示 `Permission denied`，说明压缩包没有保留执行位（尤其在 Windows 上解压/重新打包时）。执行 `chmod +x sysmon.sh`，或直接用 `bash sysmon.sh start`。
 
 默认监听 `127.0.0.1:8088`，优先使用项目内的 `.venv/bin/python`。可用环境变量覆盖：
 
