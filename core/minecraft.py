@@ -763,7 +763,7 @@ class MinecraftMonitor:
         try:
             request = urllib.request.Request(
                 "https://api.mojang.com/users/profiles/minecraft/" + urllib.parse.quote(name),
-                headers={"User-Agent": "SysMon/1.4"},
+                headers={"User-Agent": "SysMon/1.4.1"},
             )
             with urllib.request.urlopen(request, timeout=4) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -777,7 +777,7 @@ class MinecraftMonitor:
             try:
                 request = urllib.request.Request(
                     f"https://mc-heads.net/avatar/{uuid_value}/64",
-                    headers={"User-Agent": "SysMon/1.4"},
+                    headers={"User-Agent": "SysMon/1.4.1"},
                 )
                 with urllib.request.urlopen(request, timeout=5) as response:
                     image = response.read()

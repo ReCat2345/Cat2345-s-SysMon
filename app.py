@@ -32,7 +32,7 @@ from core.config import ConfigError, Store  # noqa: E402
 from core.minecraft import MinecraftMonitor  # noqa: E402
 from core.web import AppContext, MonitorServer, make_handler  # noqa: E402
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 
 
 def parse_args(argv=None) -> argparse.Namespace:

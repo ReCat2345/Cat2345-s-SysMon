@@ -32,6 +32,39 @@ from .hardware import HardwareInfo, host_info
 SERIES = ("cpu", "memory", "disk", "gpu", "net_down", "net_up")
 _NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
+# snap 的 squashfs 镜像和 Docker 的 overlay 等不是真实磁盘分区；
+# 它们经常接近 100% 满，如果参与「最高占用分区」会把整机磁盘显示成 100%。
+_SKIP_DISK_FSTYPES = {
+    "cdrom",
+    "iso9660",
+    "udf",
+    "squashfs",
+    "overlay",
+    "tmpfs",
+    "devtmpfs",
+    "ramfs",
+    "proc",
+    "sysfs",
+    "cgroup",
+    "cgroup2",
+}
+_SKIP_DISK_PREFIXES = ("/snap/",)
+
+
+def _is_physical_partition(part: Any) -> bool:
+    fstype = (getattr(part, "fstype", "") or "").lower()
+    device = getattr(part, "device", "") or ""
+    mountpoint = getattr(part, "mountpoint", "") or ""
+    if fstype in _SKIP_DISK_FSTYPES:
+        return False
+    if not fstype and not device.startswith("/dev/"):
+        return False
+    if device.startswith(("/dev/loop", "/dev/ram", "/dev/zram")):
+        return False
+    if mountpoint in ("/snap",) or mountpoint.startswith(_SKIP_DISK_PREFIXES):
+        return False
+    return True
+
 
 def _cpu_temp() -> Optional[float]:
     sensors = getattr(psutil, "sensors_temperatures", None)
@@ -605,11 +638,7 @@ class Collector:
                 parts = psutil.disk_partitions(all=False)
             except Exception:
                 parts = []
-            self._parts = [
-                p
-                for p in parts
-                if p.fstype.lower() not in ("", "cdrom", "iso9660", "udf")
-            ]
+            self._parts = [p for p in parts if _is_physical_partition(p)]
             self._parts_ts = now
         return self._parts
 
@@ -639,6 +668,7 @@ class Collector:
                 return {
                     "ts": time.time(),
                     "warming_up": True,
+                    "error": self._error,
                     "history": {key: [] for key in SERIES},
                     "hardware": hardware,
                 }

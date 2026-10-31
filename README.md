@@ -43,13 +43,40 @@ python app.py --reset-password             # 忘记密码时交互式重置（�
 python app.py --version
 ```
 
+### 后台运行（SSH）
+
+`sysmon.sh` 使用 `nohup` + `setsid` 把服务放进新会话，关闭 SSH / 断线重连不会停止服务；PID 和日志分别保存在 `.sysmon.pid`、`logs/sysmon.log`。
+
+```bash
+chmod +x sysmon.sh
+./sysmon.sh start
+./sysmon.sh status
+./sysmon.sh logs       # Ctrl+C 只退出日志查看，不影响服务
+./sysmon.sh restart
+./sysmon.sh stop
+```
+
+默认监听 `127.0.0.1:8088`，优先使用项目内的 `.venv/bin/python`。可用环境变量覆盖：
+
+```bash
+SYSMON_HOST=0.0.0.0 SYSMON_PORT=8088 SYSMON_DATA_DIR=/var/lib/sysmon ./sysmon.sh start
+```
+
+脚本是幂等的：已在运行时会直接提示，不会重复启动；启动失败会打印日志末尾。如果希望 SSH 登录后自动确保启动，可在 `~/.bashrc` 末尾加入：
+
+```bash
+[ -x "$HOME/sysmon/sysmon.sh" ] && "$HOME/sysmon/sysmon.sh" start >/dev/null 2>&1
+```
+
+生产环境仍然建议用 systemd（支持开机自启和异常自动重启）。
+
 ### 首次初始化
 
 第一次启动时控制台会打印初始化令牌，同时保存在 `data/setup-token.txt`：
 
 ```
 ========================================================
- SysMon 1.4.0  系统监控面板
+ SysMon 1.4.1  系统监控面板
  地址:     http://127.0.0.1:8088
  管理员:   未配置（首次使用需初始化）
 --------------------------------------------------------
@@ -100,7 +127,7 @@ python app.py --version
 | --- | --- | --- |
 | CPU | 型号、物理核心数 | `/proc/cpuinfo`、Windows 注册表 |
 | 内存 | 类型 / 频率 / 条数与单条容量 | Windows `Win32_PhysicalMemory`、Linux `dmidecode`、macOS `system_profiler` |
-| 磁盘 | 型号、容量、SSD/HDD；多块磁盘时显示「N 块 · 展开」列表 | Windows `Get-PhysicalDisk`、Linux `/sys/block/*/device/model` |
+| 磁盘 | 型号、容量、SSD/HDD；多块磁盘时显示「N 块 · 展开」列表；自动排除 snap 的 squashfs/loop 镜像与 Docker overlay 等虚拟分区 | Windows `Get-PhysicalDisk`、Linux `/sys/block/*/device/model` |
 | 网络 | 网卡型号或驱动、链路速率 | Windows `Get-NetAdapter`、Linux sysfs + psutil |
 
 每个模块的硬件信息可以在管理页用第二个开关单独关闭；拿不到细节时退化为总容量、分区设备名等基础信息。
@@ -249,6 +276,7 @@ py app.py --port 8088
 ```
 sysmon/
 ├── app.py                 # 入口：参数解析、启动服务
+├── sysmon.sh              # SSH 后台启动 / 停止脚本
 ├── core/
 │   ├── auth.py            # 密码哈希、会话、限流、初始化令牌
 │   ├── branding.py        # 图标 / 壁纸文件与元信息
@@ -344,6 +372,7 @@ python tests/test_smoke.py
 ## 已知限制
 
 - 容器环境：CPU / 内存指标来自宿主机视角（psutil），不读取 cgroup 限额；磁盘拿不到分区列表时会退化为根目录占用。
+- Linux 磁盘统计会跳过 snap 的 `squashfs`/`loop` 镜像、Docker `overlay`、`tmpfs` 等虚拟分区，避免只读镜像被误算成 100%。
 - GPU：Windows 下只有 NVIDIA 可用；AMD / Intel 依赖 Linux 的 sysfs 或 `intel-gpu-top`。Intel 需要 perf 权限，普通用户可能读不到。
 - 多显卡时面板显示利用率最高的一张，不逐卡展开。
 - 自定义配色由主色按算法派生容器色与文字色，与 Material You 官方动态取色的结果不完全一致；5 套预设观感更稳定。
