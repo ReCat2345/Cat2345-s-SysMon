@@ -1,4 +1,4 @@
-vibe coding by deepseek v4 flash，随手写的，大佬轻喷（
+vibe coding by deepseek v4 flash，随手写的这玩意，readme也是ai帮我写的，大佬轻喷（
 
 # SysMon · 轻量系统监控面板
 
