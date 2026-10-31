@@ -81,6 +81,7 @@ def default_settings(gpu_supported: bool) -> Dict[str, Any]:
         "refresh_seconds": DEFAULT_REFRESH,
         "theme": "auto",
         "gpu_enabled": gpu_on,
+        "minecraft_enabled": False,
         "branding": {
             "title": DEFAULT_TITLE,
             "palette": DEFAULT_PALETTE,
@@ -201,6 +202,7 @@ def normalize_settings(raw: Any, gpu_supported: bool, strict: bool = True) -> Di
         gpu_enabled = False
 
     branding = _normalize_branding(raw.get("branding"), strict)
+    minecraft_enabled = bool(raw.get("minecraft_enabled", False))
 
     incoming = raw.get("modules", None)
     if incoming is None:
@@ -262,6 +264,7 @@ def normalize_settings(raw: Any, gpu_supported: bool, strict: bool = True) -> Di
         "refresh_seconds": refresh,
         "theme": theme,
         "gpu_enabled": gpu_enabled,
+        "minecraft_enabled": minecraft_enabled,
         "branding": branding,
         "modules": modules,
     }

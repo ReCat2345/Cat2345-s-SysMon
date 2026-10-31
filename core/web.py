@@ -14,7 +14,7 @@ from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from . import auth
 from .branding import BrandingStore, limit_for, sniff_image
@@ -48,6 +48,7 @@ class AppContext:
         store: Store,
         collector: Collector,
         branding: BrandingStore,
+        minecraft: Any,
         static_dir: Path,
         data_dir: Path,
         setup_token: Optional[str],
@@ -56,6 +57,7 @@ class AppContext:
         self.store = store
         self.collector = collector
         self.branding = branding
+        self.minecraft = minecraft
         self.static_dir = Path(static_dir)
         self.data_dir = Path(data_dir)
         self.setup_token = setup_token
@@ -119,6 +121,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/metrics":
             # 只读指标对访客开放；修改类接口仍然需要登录
             self._json(self._metrics_payload())
+        elif path == "/api/mc/servers":
+            self._mc_list()
+        elif path.startswith("/api/mc/servers/"):
+            self._mc_server(path)
+        elif path.startswith("/api/mc/avatar/"):
+            self._mc_avatar(path)
         elif path == "/healthz":
             self._json({"ok": True})
         elif path == "/favicon.ico":
@@ -140,6 +148,10 @@ class Handler(BaseHTTPRequestHandler):
             self._api_config()
         elif path == "/api/gpu/rescan":
             self._api_gpu_rescan()
+        elif path == "/api/mc/servers":
+            self._mc_add()
+        elif path.startswith("/api/mc/servers/") and path.endswith("/update"):
+            self._mc_update(path)
         elif path == "/api/password":
             self._api_password()
         elif path.startswith("/api/branding/"):
@@ -313,6 +325,7 @@ class Handler(BaseHTTPRequestHandler):
             settings = self.ctx.store.save_settings(raw)
         except ConfigError as exc:
             raise ApiError(exc.status, str(exc)) from exc
+        self.ctx.minecraft.wake()
         self._json({"settings": settings, "capabilities": self._caps()})
 
     def _api_gpu_rescan(self) -> None:
@@ -380,6 +393,91 @@ class Handler(BaseHTTPRequestHandler):
             data = path.read_bytes()
         except OSError:
             raise ApiError(404, "资源不存在")
+        self._send(200, data, mime)
+
+    # ------------------------------------------------------------------ Minecraft
+    def _mc_enabled(self) -> bool:
+        return bool(self.ctx.store.settings().get("minecraft_enabled"))
+
+    def _mc_require_enabled(self) -> None:
+        if not self._mc_enabled():
+            raise ApiError(404, "MC 服务器监控未启用")
+
+    def _mc_list(self) -> None:
+        self._mc_require_enabled()
+        self._json({"servers": self.ctx.minecraft.list_servers()})
+
+    def _mc_add(self) -> None:
+        self._require_session()
+        self._mc_require_enabled()
+        body = self._json_body()
+        try:
+            server = self.ctx.minecraft.add_server(body.get("name"), body.get("address"))
+        except ValueError as exc:
+            raise ApiError(400, str(exc)) from exc
+        self._json({"server": server})
+
+    def _mc_update(self, path: str) -> None:
+        self._require_session()
+        self._mc_require_enabled()
+        parts = [segment for segment in path.strip("/").split("/") if segment]
+        if len(parts) != 5 or parts[:3] != ["api", "mc", "servers"] or parts[4] != "update":
+            raise ApiError(404, "接口不存在")
+        body = self._json_body()
+        try:
+            server = self.ctx.minecraft.update_server(
+                parts[3], body.get("name"), body.get("address")
+            )
+        except ValueError as exc:
+            raise ApiError(400, str(exc)) from exc
+        self._json({"server": server})
+
+    def _mc_server(self, path: str) -> None:
+        self._mc_require_enabled()
+        parts = [segment for segment in path.strip("/").split("/") if segment]
+        if len(parts) < 4 or parts[0] != "api" or parts[1] != "mc" or parts[2] != "servers":
+            raise ApiError(404, "接口不存在")
+        server_id = parts[3]
+        if len(parts) == 4:
+            server = self.ctx.minecraft.get_server(server_id)
+            if not server:
+                raise ApiError(404, "服务器不存在")
+            self._json({"server": server})
+            return
+
+        if len(parts) == 5 and parts[4] == "history":
+            server = self.ctx.minecraft.get_server(server_id)
+            if not server:
+                raise ApiError(404, "服务器不存在")
+            query = parse_qs(urlparse(self.path).query)
+            now = int(time.time())
+            from_ts = self._query_int(query, "from_ts", now - 3600)
+            to_ts = self._query_int(query, "to_ts", now)
+            try:
+                data = self.ctx.minecraft.history(server_id, from_ts, to_ts)
+            except ValueError as exc:
+                raise ApiError(400, str(exc)) from exc
+            data["server_id"] = server_id
+            self._json(data)
+            return
+        raise ApiError(404, "接口不存在")
+
+    def _query_int(self, query: Dict[str, List[str]], name: str, default: int) -> int:
+        raw = (query.get(name) or [None])[0]
+        if raw in (None, ""):
+            return default
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            raise ApiError(400, f"{name} 需要是整数时间戳")
+
+    def _mc_avatar(self, path: str) -> None:
+        self._mc_require_enabled()
+        name = unquote(path.rsplit("/", 1)[-1])
+        try:
+            data, mime = self.ctx.minecraft.avatar(name)
+        except ValueError:
+            raise ApiError(404, "头像不存在")
         self._send(200, data, mime)
 
     def _read_image(self, limit: int) -> bytes:

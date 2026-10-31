@@ -82,7 +82,33 @@
 
 <!-- ================= 监控面板 ================= -->
 <div class="shell" id="view-app" hidden>
+  <aside class="nav-drawer" id="navDrawer" hidden>
+    <div class="drawer-head">
+      <span class="brand-mark small" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h4l2.4-7 3.6 12 2.4-8 1.8 3H21"/></svg>
+      </span>
+      <div>
+        <div class="brand-name">SysMon</div>
+        <div class="brand-sub">导航</div>
+      </div>
+    </div>
+    <nav class="drawer-nav">
+      <button class="drawer-item active" type="button" data-nav="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>
+        系统监控
+      </button>
+      <button class="drawer-item" type="button" data-nav="mc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>
+        MC 服务器
+      </button>
+    </nav>
+  </aside>
+  <div class="drawer-scrim" id="drawerScrim" hidden></div>
+
   <header class="topbar">
+    <button class="icon-btn" id="menuBtn" type="button" aria-label="打开导航" title="导航" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
     <div class="top-brand">
       <span class="brand-mark small" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h4l2.4-7 3.6 12 2.4-8 1.8 3H21"/></svg>
@@ -114,7 +140,7 @@
     </div>
   </header>
 
-  <div class="page">
+  <div class="page" id="dashboardPage">
     <div class="page-head">
       <div>
         <h1>系统概览</h1>
@@ -140,6 +166,143 @@
     <p class="foot">
       SysMon <span id="versionLabel">—</span> · 每 <span id="footInterval">5</span> 秒刷新 · 指标通过 nvidia-smi / psutil 在本机采集
     </p>
+  </div>
+
+  <!-- ================= MC 服务器 ================= -->
+  <div class="page" id="mcPage" hidden>
+    <div class="page-head">
+      <div>
+        <h1>MC 服务器</h1>
+        <p id="mcSub">Java 版服务器状态</p>
+      </div>
+      <div class="page-meta">
+        <button class="btn tonal compact" id="mcAddBtn" type="button" hidden>添加服务器</button>
+      </div>
+    </div>
+
+    <div class="empty" id="mcEmpty" hidden>
+      <p id="mcEmptyText"></p>
+      <button class="btn tonal" id="mcEmptyAdd" type="button" hidden>添加服务器</button>
+    </div>
+
+    <div id="mcListView" hidden>
+      <div class="mc-list-head">
+        <p class="mc-summary" id="mcSummary"></p>
+        <div class="segmented mc-view-toggle" id="mcViewToggle" role="group" aria-label="服务器列表显示方式">
+          <button type="button" data-mcview="grid" class="active">网格</button>
+          <button type="button" data-mcview="list">列表</button>
+        </div>
+      </div>
+      <div class="mc-cards" id="mcCards"></div>
+      <div class="card mc-table-wrap" id="mcTableWrap" hidden>
+        <div class="table-scroll">
+          <table class="mc-table">
+            <thead>
+              <tr>
+                <th>服务器名称</th>
+                <th>状态</th>
+                <th>服务器地址</th>
+                <th>延迟</th>
+                <th>版本</th>
+                <th>在线玩家</th>
+                <th>MOTD</th>
+              </tr>
+            </thead>
+            <tbody id="mcListBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="mcDetailView" hidden>
+      <button class="btn text compact" id="mcBackBtn" type="button">← 返回服务器列表</button>
+      <div class="mc-detail-head">
+        <div>
+          <h2 id="mcDetailName">—</h2>
+          <p id="mcDetailAddr" class="muted small">—</p>
+        </div>
+        <div class="mc-detail-actions">
+          <button class="btn tonal compact" id="mcEditBtn" type="button" hidden>编辑服务器</button>
+          <span class="mc-state" id="mcDetailState">检测中</span>
+        </div>
+      </div>
+
+      <div class="mc-grid">
+        <section class="card section">
+          <div class="section-head"><h2>服务器信息</h2></div>
+          <dl class="mc-facts">
+            <div><dt>MC 版本</dt><dd id="mcVersion">—</dd></div>
+            <div><dt>协议</dt><dd id="mcProtocol">—</dd></div>
+            <div><dt>延迟</dt><dd id="mcLatency">—</dd></div>
+            <div><dt>在线玩家</dt><dd id="mcPlayersCount">—</dd></div>
+            <div class="full"><dt>MOTD</dt><dd id="mcMotd" class="mc-motd">—</dd></div>
+          </dl>
+        </section>
+
+        <section class="card section">
+          <div class="section-head"><h2>在线玩家</h2><p id="mcPlayerHint"></p></div>
+          <div class="mc-players" id="mcPlayerList"></div>
+        </section>
+
+        <section class="card section mc-history">
+          <div class="section-head">
+            <h2>在线历史</h2>
+            <p>按分钟记录在线人数峰值，数据保存在本地，重启后仍可查看。</p>
+          </div>
+          <div class="mc-ranges" id="mcRanges">
+            <button class="mc-range" type="button" data-range="15m">15 分钟</button>
+            <button class="mc-range" type="button" data-range="30m">30 分钟</button>
+            <button class="mc-range active" type="button" data-range="1h">1 小时</button>
+            <button class="mc-range" type="button" data-range="6h">6 小时</button>
+            <button class="mc-range" type="button" data-range="12h">12 小时</button>
+            <button class="mc-range" type="button" data-range="24h">24 小时</button>
+            <button class="mc-range" type="button" data-range="7d">7 天</button>
+            <button class="mc-range" type="button" data-range="custom">自定义</button>
+          </div>
+          <div class="mc-custom" id="mcCustom" hidden>
+            <input class="mc-input" id="mcFrom" maxlength="14" placeholder="yyyymmddhhmmss" aria-label="开始时间">
+            <span>至</span>
+            <input class="mc-input" id="mcTo" maxlength="14" placeholder="yyyymmddhhmmss" aria-label="结束时间">
+            <button class="btn tonal compact" id="mcApplyRange" type="button">查看</button>
+          </div>
+          <p class="form-error" id="mcRangeError"></p>
+          <div class="mc-chart-wrap">
+            <canvas id="mcChart" class="mc-chart" height="180"></canvas>
+            <p class="mc-chart-empty" id="mcChartEmpty" hidden>暂无历史数据</p>
+            <div class="mc-chart-foot">
+              <span id="mcRangeLabel"></span>
+              <span id="mcPeak"></span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div id="mcWizardView" hidden>
+      <form class="card section mc-form" id="mcForm" novalidate>
+        <div class="section-head">
+          <h2 id="mcFormTitle">添加服务器</h2>
+          <p id="mcFormHint">填写 Java 版服务器地址，不带端口时默认 25565。</p>
+        </div>
+        <div class="field">
+          <input id="mcName" maxlength="40" placeholder=" " autocomplete="off" required>
+          <label for="mcName">服务器名称</label>
+        </div>
+        <div class="field">
+          <input id="mcAddr" placeholder=" " autocomplete="off" spellcheck="false" required>
+          <label for="mcAddr">主地址（host 或 host:port）</label>
+        </div>
+        <div class="field">
+          <input id="mcRcon" value="Coming soon..." disabled>
+          <label for="mcRcon">RCON 地址（Coming soon...）</label>
+        </div>
+        <p class="form-error" id="mcFormError" role="alert"></p>
+        <div class="mc-form-actions">
+          <button class="btn text" id="mcCancel" type="button">取消</button>
+          <button class="btn filled" id="mcSubmit" type="submit">添加</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -232,6 +395,21 @@
             <span class="muted small">卡片与顶栏底色</span>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="card section">
+      <div class="section-head">
+        <h2>Minecraft 服务器</h2>
+        <p>启用后左侧出现导航按钮和「MC 服务器」入口；默认关闭。</p>
+      </div>
+      <div class="form-row">
+        <span class="row-label">启用监控</span>
+        <label class="switch" title="启用 MC 服务器监控">
+          <input type="checkbox" id="mcEnabled">
+          <span class="track" aria-hidden="true"></span>
+        </label>
+        <span class="muted small">关闭时导航按钮与侧边栏一起隐藏</span>
       </div>
     </section>
 

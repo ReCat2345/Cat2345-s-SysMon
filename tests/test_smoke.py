@@ -121,6 +121,7 @@ def main() -> int:
         check("品牌默认值", state.get("settings", {}).get("branding", {}).get("title") == "SysMon")
         check("配色预设数量", len(state.get("palettes", [])) == 5, str(len(state.get("palettes", []))))
         check("硬件信息字段", isinstance(state.get("metrics", {}).get("hardware"), dict))
+        check("MC 默认关闭", state.get("settings", {}).get("minecraft_enabled") is False)
 
         status, visitor = call("GET", "/api/metrics")
         check("访客可读指标", status == 200 and "metrics" in visitor, str(status))

@@ -365,6 +365,56 @@ const dom = {
   setupBanner: $("#setupBanner"),
   bannerSetupBtn: $("#bannerSetupBtn"),
 
+  menuBtn: $("#menuBtn"),
+  navDrawer: $("#navDrawer"),
+  drawerScrim: $("#drawerScrim"),
+  dashboardPage: $("#dashboardPage"),
+  mcPage: $("#mcPage"),
+  mcSub: $("#mcSub"),
+  mcAddBtn: $("#mcAddBtn"),
+  mcEmpty: $("#mcEmpty"),
+  mcEmptyText: $("#mcEmptyText"),
+  mcEmptyAdd: $("#mcEmptyAdd"),
+  mcListView: $("#mcListView"),
+  mcSummary: $("#mcSummary"),
+  mcListBody: $("#mcListBody"),
+  mcCards: $("#mcCards"),
+  mcTableWrap: $("#mcTableWrap"),
+  mcViewToggle: $("#mcViewToggle"),
+  mcDetailView: $("#mcDetailView"),
+  mcBackBtn: $("#mcBackBtn"),
+  mcEditBtn: $("#mcEditBtn"),
+  mcDetailName: $("#mcDetailName"),
+  mcDetailAddr: $("#mcDetailAddr"),
+  mcDetailState: $("#mcDetailState"),
+  mcVersion: $("#mcVersion"),
+  mcProtocol: $("#mcProtocol"),
+  mcLatency: $("#mcLatency"),
+  mcPlayersCount: $("#mcPlayersCount"),
+  mcMotd: $("#mcMotd"),
+  mcPlayerHint: $("#mcPlayerHint"),
+  mcPlayerList: $("#mcPlayerList"),
+  mcRanges: $("#mcRanges"),
+  mcCustom: $("#mcCustom"),
+  mcFrom: $("#mcFrom"),
+  mcTo: $("#mcTo"),
+  mcApplyRange: $("#mcApplyRange"),
+  mcRangeError: $("#mcRangeError"),
+  mcChart: $("#mcChart"),
+  mcChartEmpty: $("#mcChartEmpty"),
+  mcRangeLabel: $("#mcRangeLabel"),
+  mcPeak: $("#mcPeak"),
+  mcWizardView: $("#mcWizardView"),
+  mcForm: $("#mcForm"),
+  mcFormTitle: $("#mcFormTitle"),
+  mcFormHint: $("#mcFormHint"),
+  mcName: $("#mcName"),
+  mcAddr: $("#mcAddr"),
+  mcFormError: $("#mcFormError"),
+  mcCancel: $("#mcCancel"),
+  mcSubmit: $("#mcSubmit"),
+  mcEnabled: $("#mcEnabled"),
+
   brandTitle: $("#brandTitle"),
   titleCount: $("#titleCount"),
   iconPreview: $("#iconPreview"),
@@ -440,6 +490,20 @@ const S = {
   pollMs: 5000,
   dirty: false,
   adminOpen: false,
+  view: "dashboard",
+  mc: {
+    servers: [],
+    currentId: null,
+    detail: null,
+    range: "1h",
+    history: null,
+    forceList: false,
+    timer: null,
+    loading: false,
+    viewMode: "grid",
+    formMode: "add",
+    editId: null,
+  },
 };
 
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -520,6 +584,8 @@ function snack(message, isError = false) {
 function showAuth(needsSetup) {
   S.authed = false;
   stopPolling();
+  closeDrawer();
+  S.view = "dashboard";
   dom.boot.hidden = true;
   dom.app.hidden = true;
   dom.admin.hidden = true;
@@ -645,6 +711,9 @@ function enterApp(state) {
   renderDashboard(true);
   if (S.authed) renderAdmin();
   renderMeta();
+  S.view = "dashboard";
+  S.mc.viewMode = mcStoredView();
+  showDashboard();
   startPolling();
 }
 
@@ -653,6 +722,9 @@ function updateAuthChrome() {
   dom.roChip.hidden = S.authed;
   dom.adminBtn.hidden = !S.authed;
   dom.logoutBtn.hidden = !S.authed;
+  dom.mcAddBtn.hidden = !S.authed;
+  dom.mcEmptyAdd.hidden = !S.authed;
+  dom.mcEditBtn.hidden = !S.authed;
   if (!S.authed) {
     dom.loginBtn.textContent = S.needsSetup ? "初始化管理" : "登录";
   }
@@ -676,6 +748,7 @@ function updateChrome() {
     dom.aboutCpu.textContent = host.cpu_model || "—";
   }
   updateAuthChrome();
+  updateNavVisibility();
 }
 
 function renderMeta() {
@@ -717,11 +790,14 @@ async function poll() {
   try {
     const data = await api("/api/metrics");
     const prevRefresh = S.settings ? S.settings.refresh_seconds : null;
-    const changed = JSON.stringify(data.settings) !== JSON.stringify(S.settings);
+    // 管理员有未保存改动时，不能被轮询里的旧设置覆盖，否则配色预览会被还原
+    const ignoreRemoteSettings = S.adminOpen && S.dirty;
+    const changed =
+      !ignoreRemoteSettings && JSON.stringify(data.settings) !== JSON.stringify(S.settings);
     const previousAssets = JSON.stringify(S.assets);
     S.metrics = data.metrics;
     if (data.capabilities) S.caps = data.capabilities;
-    if (data.settings) S.settings = data.settings;
+    if (data.settings && !ignoreRemoteSettings) S.settings = data.settings;
     if (data.assets) S.assets = data.assets;
     const assetsChanged = JSON.stringify(S.assets) !== previousAssets;
 
@@ -1177,6 +1253,7 @@ function updateNet(card, m) {
 
 function redrawAll() {
   updateAll();
+  if (S.mc && S.mc.history) drawMCHistory(S.mc.history);
 }
 
 /* ------------------------------------------------------------------ 图表 */
@@ -1324,12 +1401,579 @@ function drawWave(canvas, series, maxValue) {
   });
 }
 
-/* ------------------------------------------------------------------ 管理面板 */
+/* ------------------------------------------------------------------ 导航 / MC 服务器 */
+const MC_RANGES = {
+  "15m": 15 * 60,
+  "30m": 30 * 60,
+  "1h": 3600,
+  "6h": 6 * 3600,
+  "12h": 12 * 3600,
+  "24h": 24 * 3600,
+  "7d": 7 * 86400,
+};
+
+function updateDrawerActive() {
+  $$(".drawer-item").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.nav === (S.view === "mc" ? "mc" : "dashboard"));
+  });
+}
+
+function openDrawer() {
+  if (!S.settings || !S.settings.minecraft_enabled) return;
+  dom.navDrawer.hidden = false;
+  dom.navDrawer.classList.add("open");
+  dom.drawerScrim.hidden = false;
+}
+
+function closeDrawer() {
+  dom.navDrawer.classList.remove("open");
+  dom.drawerScrim.hidden = true;
+}
+
+function updateNavVisibility() {
+  const enabled = Boolean(S.settings && S.settings.minecraft_enabled);
+  dom.menuBtn.hidden = !enabled;
+  dom.navDrawer.hidden = !enabled;
+  if (!enabled) {
+    closeDrawer();
+    if (S.view === "mc") showDashboard();
+  }
+  updateDrawerActive();
+}
+
+function showDashboard() {
+  S.view = "dashboard";
+  stopMCTimer();
+  dom.dashboardPage.hidden = false;
+  dom.mcPage.hidden = true;
+  updateDrawerActive();
+}
+
+function hideMCViews() {
+  [dom.mcEmpty, dom.mcListView, dom.mcDetailView, dom.mcWizardView].forEach((node) => {
+    node.hidden = true;
+  });
+}
+
+function enterMC() {
+  if (!S.settings || !S.settings.minecraft_enabled) return;
+  S.view = "mc";
+  stopMCTimer();
+  dom.dashboardPage.hidden = true;
+  dom.mcPage.hidden = false;
+  hideMCViews();
+  dom.mcSub.textContent = "正在加载服务器…";
+  S.mc.forceList = false;
+  S.mc.currentId = null;
+  updateDrawerActive();
+  window.scrollTo(0, 0);
+  loadMCServers({ autoDetail: true });
+}
+
+function stopMCTimer() {
+  if (S.mc.timer) {
+    clearInterval(S.mc.timer);
+    S.mc.timer = null;
+  }
+}
+
+function startMCTimer(mode) {
+  stopMCTimer();
+  S.mc.timer = setInterval(() => {
+    if (S.view !== "mc") return;
+    if (mode === "detail" && S.mc.currentId) refreshMCDetail(false);
+    else if (mode === "list") loadMCServers({ silent: true });
+  }, 15000);
+}
+
+async function loadMCServers({ autoDetail = false, silent = false } = {}) {
+  if (S.mc.loading) return;
+  if (silent && (S.view !== "mc" || S.mc.currentId)) return;
+  S.mc.loading = true;
+  try {
+    const data = await api("/api/mc/servers");
+    S.mc.servers = data.servers || [];
+    if (autoDetail && S.mc.servers.length === 1 && !S.mc.forceList) {
+      openMCDetail(S.mc.servers[0].id);
+      return;
+    }
+    renderMCList();
+  } catch (err) {
+    if (!silent) snack(err.message, true);
+  } finally {
+    S.mc.loading = false;
+  }
+}
+
+function mcStoredView() {
+  try {
+    return localStorage.getItem("sysmon-mc-view") === "list" ? "list" : "grid";
+  } catch (err) {
+    return "grid";
+  }
+}
+
+function applyMCViewMode() {
+  const grid = S.mc.viewMode !== "list";
+  dom.mcCards.hidden = !grid;
+  dom.mcTableWrap.hidden = grid;
+  $$("#mcViewToggle button").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mcview === S.mc.viewMode);
+  });
+}
+
+function setMCViewMode(mode) {
+  S.mc.viewMode = mode === "list" ? "list" : "grid";
+  try {
+    localStorage.setItem("sysmon-mc-view", S.mc.viewMode);
+  } catch (err) {
+    /* 忽略隐私模式下的存储异常 */
+  }
+  applyMCViewMode();
+}
+
+function mcPlayersText(server) {
+  const players = server.players || {};
+  return `${players.online || 0}/${players.max || 0}`;
+}
+
+function mcLatencyText(server) {
+  return typeof server.latency_ms === "number" ? `${server.latency_ms} ms` : "—";
+}
+
+function buildMCCard(server) {
+  const card = document.createElement("article");
+  card.className = "mc-card";
+  card.dataset.id = server.id;
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.innerHTML = `<div class="mc-card-top">
+      <h3></h3>
+      <span class="mc-java">JAVA</span>
+      <span class="mc-state"></span>
+    </div>
+    <p class="mc-card-addr"></p>
+    <div class="mc-card-stats">
+      <div><span>延迟</span><strong data-ref="latency"></strong></div>
+      <div><span>版本</span><strong data-ref="version"></strong></div>
+      <div><span>玩家</span><strong data-ref="players"></strong></div>
+    </div>
+    <p class="mc-card-motd"></p>`;
+  card.querySelector("h3").textContent = server.name;
+  card.querySelector(".mc-card-addr").textContent = server.address;
+  card.querySelector('[data-ref="latency"]').textContent = mcLatencyText(server);
+  card.querySelector('[data-ref="version"]').textContent = server.version || "—";
+  card.querySelector('[data-ref="players"]').textContent = mcPlayersText(server);
+  card.querySelector(".mc-card-motd").textContent = server.motd || "—";
+  const state = card.querySelector(".mc-state");
+  state.textContent = server.online ? "在线" : "离线";
+  state.classList.add(server.online ? "online" : "offline");
+  card.addEventListener("click", () => openMCDetail(server.id));
+  card.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openMCDetail(server.id);
+    }
+  });
+  return card;
+}
+
+function buildMCTableRow(server) {
+  const row = document.createElement("tr");
+  row.dataset.id = server.id;
+  row.tabIndex = 0;
+  row.innerHTML = `<td><strong></strong></td>
+      <td><span class="mc-state"></span></td>
+      <td class="mono"></td>
+      <td></td>
+      <td></td>
+      <td></td>
+      <td class="mc-motd-cell"><span class="mc-motd-text"></span></td>`;
+  row.querySelector("strong").textContent = server.name;
+  const state = row.querySelector(".mc-state");
+  state.textContent = server.online ? "在线" : "离线";
+  state.classList.add(server.online ? "online" : "offline");
+  const cells = row.querySelectorAll("td");
+  cells[2].textContent = server.address;
+  cells[3].textContent = mcLatencyText(server);
+  cells[4].textContent = server.version || "—";
+  cells[5].textContent = mcPlayersText(server);
+  const motdText = row.querySelector(".mc-motd-text");
+  motdText.textContent = server.motd || "—";
+  cells[6].title = server.motd || "";
+  row.addEventListener("click", () => openMCDetail(server.id));
+  row.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") openMCDetail(server.id);
+  });
+  return row;
+}
+
+function renderMCList() {
+  hideMCViews();
+  dom.mcSub.textContent = `Java 版服务器 · 共 ${S.mc.servers.length} 个`;
+  dom.mcAddBtn.hidden = !S.authed;
+  if (!S.mc.servers.length) {
+    dom.mcEmpty.hidden = false;
+    dom.mcEmptyText.textContent = S.authed ? "还没有添加服务器" : "管理员还没有添加服务器";
+    dom.mcEmptyAdd.hidden = !S.authed;
+    startMCTimer("list");
+    return;
+  }
+  dom.mcListView.hidden = false;
+  dom.mcSummary.textContent = `当前有 ${S.mc.servers.length} 个服务器`;
+  dom.mcCards.innerHTML = "";
+  dom.mcListBody.innerHTML = "";
+  S.mc.servers.forEach((server) => {
+    dom.mcCards.appendChild(buildMCCard(server));
+    dom.mcListBody.appendChild(buildMCTableRow(server));
+  });
+  applyMCViewMode();
+  startMCTimer("list");
+}
+
+function openMCDetail(serverId) {
+  S.mc.currentId = serverId;
+  S.mc.range = "1h";
+  hideMCViews();
+  dom.mcDetailView.hidden = false;
+  dom.mcEditBtn.hidden = !S.authed;
+  dom.mcSub.textContent = "服务器详情";
+  dom.mcFrom.value = "";
+  dom.mcTo.value = "";
+  dom.mcCustom.hidden = true;
+  $$("#mcRanges .mc-range").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.range === "1h");
+  });
+  window.scrollTo(0, 0);
+  refreshMCDetail(true);
+}
+
+async function refreshMCDetail(resetHistory) {
+  const serverId = S.mc.currentId;
+  if (!serverId) return;
+  try {
+    const data = await api(`/api/mc/servers/${encodeURIComponent(serverId)}`);
+    const server = data.server;
+    S.mc.detail = server;
+    renderMCDetail(server);
+    if (resetHistory) {
+      S.mc.range = "1h";
+      loadMCHistory("1h");
+    } else if (S.mc.range !== "custom") {
+      loadMCHistory(S.mc.range, { silent: true });
+    }
+    startMCTimer("detail");
+  } catch (err) {
+    if (err.status === 404) {
+      S.mc.forceList = true;
+      loadMCServers();
+      return;
+    }
+    if (!resetHistory) return;
+    snack(err.message, true);
+  }
+}
+
+function renderMCDetail(server) {
+  dom.mcDetailName.textContent = server.name;
+  dom.mcDetailAddr.textContent = server.address;
+  dom.mcDetailState.textContent = server.online ? "在线" : "离线";
+  dom.mcDetailState.className = `mc-state ${server.online ? "online" : "offline"}`;
+
+  dom.mcVersion.textContent = server.version || "—";
+  dom.mcProtocol.textContent = server.protocol ? String(server.protocol) : "—";
+  dom.mcLatency.textContent = typeof server.latency_ms === "number" ? `${server.latency_ms} ms` : "—";
+  const players = server.players || { online: 0, max: 0, sample: [] };
+  dom.mcPlayersCount.textContent = `${players.online || 0} / ${players.max || 0}`;
+  dom.mcMotd.textContent = server.motd || "—";
+  dom.mcPlayerHint.textContent = server.online
+    ? `${players.online || 0} / ${players.max || 0} 在线`
+    : server.error || "服务器离线";
+
+  const list = dom.mcPlayerList;
+  list.innerHTML = "";
+  if (!server.online) {
+    const note = document.createElement("p");
+    note.className = "muted small";
+    note.textContent = server.error ? `离线：${server.error}` : "服务器当前离线";
+    list.appendChild(note);
+    return;
+  }
+  const sample = players.sample || [];
+  if (!sample.length) {
+    const note = document.createElement("p");
+    note.className = "muted small";
+    note.textContent = "服务器未公开在线玩家列表（可能 hide-online-players=true）";
+    list.appendChild(note);
+    return;
+  }
+  sample.forEach((player) => {
+    const chip = document.createElement("span");
+    chip.className = "mc-player";
+    const avatar = document.createElement("img");
+    avatar.src = `/api/mc/avatar/${encodeURIComponent(player.name)}`;
+    avatar.alt = "";
+    avatar.loading = "lazy";
+    const name = document.createElement("span");
+    name.textContent = player.name;
+    chip.appendChild(avatar);
+    chip.appendChild(name);
+    list.appendChild(chip);
+  });
+}
+
+function fmtStamp(ts) {
+  const d = new Date(ts * 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  return (
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  );
+}
+
+function parseStamp(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{14}$/.test(text)) return null;
+  const year = Number(text.slice(0, 4));
+  const month = Number(text.slice(4, 6)) - 1;
+  const day = Number(text.slice(6, 8));
+  const hour = Number(text.slice(8, 10));
+  const minute = Number(text.slice(10, 12));
+  const second = Number(text.slice(12, 14));
+  const date = new Date(year, month, day, hour, minute, second);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day ||
+    date.getHours() !== hour ||
+    date.getMinutes() !== minute ||
+    date.getSeconds() !== second
+  ) {
+    return null;
+  }
+  return Math.floor(date.getTime() / 1000);
+}
+
+function fmtMCTime(ts) {
+  return new Date(ts * 1000).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+function setMCRange(range) {
+  S.mc.range = range;
+  $$("#mcRanges .mc-range").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.range === range);
+  });
+  dom.mcRangeError.textContent = "";
+  if (range === "custom") {
+    const now = Math.floor(Date.now() / 1000);
+    if (!dom.mcFrom.value) dom.mcFrom.value = fmtStamp(now - 3600);
+    if (!dom.mcTo.value) dom.mcTo.value = fmtStamp(now);
+    dom.mcCustom.hidden = false;
+    return;
+  }
+  dom.mcCustom.hidden = true;
+  loadMCHistory(range);
+}
+
+async function loadMCHistory(range, custom = null) {
+  const serverId = S.mc.currentId;
+  if (!serverId) return;
+  let from;
+  let to;
+  if (range === "custom") {
+    if (!custom) return;
+    from = custom.from;
+    to = custom.to;
+  } else {
+    const seconds = MC_RANGES[range] || 3600;
+    to = Math.floor(Date.now() / 1000);
+    from = to - seconds;
+  }
+  try {
+    const data = await api(
+      `/api/mc/servers/${encodeURIComponent(serverId)}/history?from_ts=${from}&to_ts=${to}`
+    );
+    S.mc.history = data;
+    drawMCHistory(data);
+    dom.mcPeak.textContent = `峰值 ${data.peak} 人`;
+    dom.mcRangeLabel.textContent = `${fmtMCTime(data.from_ts)} – ${fmtMCTime(data.to_ts)}`;
+    dom.mcChartEmpty.hidden = data.points.length > 0;
+    dom.mcRangeError.textContent = "";
+  } catch (err) {
+    dom.mcRangeError.textContent = err.message;
+  }
+}
+
+function drawMCHistory(data) {
+  const canvas = dom.mcChart;
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const colors = readColors();
+  const pad = { left: 8, right: 8, top: 10, bottom: 10 };
+  const plotWidth = width - pad.left - pad.right;
+  const plotHeight = height - pad.top - pad.bottom;
+
+  ctx.save();
+  ctx.strokeStyle = colors.grid;
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 5]);
+  for (let i = 1; i <= 3; i += 1) {
+    const y = pad.top + (plotHeight * i) / 4;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(width - pad.right, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  const points = data.points || [];
+  if (!points.length) return;
+  const max = Math.max(1, data.peak || 0);
+  const from = data.from_ts;
+  const to = data.to_ts;
+  const xAt = (ts) => pad.left + ((ts - from) / Math.max(1, to - from)) * plotWidth;
+  const yAt = (value) => pad.top + plotHeight - (Math.max(0, value) / max) * plotHeight;
+
+  const coords = points.map(([ts, value]) => [xAt(ts), yAt(value)]);
+  ctx.beginPath();
+  ctx.moveTo(coords[0][0], coords[0][1]);
+  for (let i = 1; i < coords.length; i += 1) {
+    const [x0, y0] = coords[i - 1];
+    const [x1, y1] = coords[i];
+    const mid = (x0 + x1) / 2;
+    ctx.bezierCurveTo(mid, y0, mid, y1, x1, y1);
+  }
+  ctx.lineTo(coords[coords.length - 1][0], height - pad.bottom);
+  ctx.lineTo(coords[0][0], height - pad.bottom);
+  ctx.closePath();
+  const gradient = ctx.createLinearGradient(0, pad.top, 0, height - pad.bottom);
+  gradient.addColorStop(0, withAlpha(colors.primary, 0.22));
+  gradient.addColorStop(1, withAlpha(colors.primary, 0));
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(coords[0][0], coords[0][1]);
+  for (let i = 1; i < coords.length; i += 1) {
+    const [x0, y0] = coords[i - 1];
+    const [x1, y1] = coords[i];
+    const mid = (x0 + x1) / 2;
+    ctx.bezierCurveTo(mid, y0, mid, y1, x1, y1);
+  }
+  ctx.strokeStyle = colors.primary;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  const [lastX, lastY] = coords[coords.length - 1];
+  ctx.beginPath();
+  ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+  ctx.fillStyle = colors.surface;
+  ctx.fill();
+  ctx.strokeStyle = colors.primary;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function openMCWizard(mode = "add", server = null) {
+  if (!S.authed) return;
+  const editing = mode === "edit" && server;
+  S.mc.formMode = editing ? "edit" : "add";
+  S.mc.editId = editing ? server.id : null;
+  hideMCViews();
+  dom.mcWizardView.hidden = false;
+  dom.mcSub.textContent = editing ? "编辑服务器" : "添加服务器";
+  dom.mcFormTitle.textContent = editing ? "编辑服务器" : "添加服务器";
+  dom.mcFormHint.textContent = editing
+    ? "修改服务器名称或主地址；RCON 即将到来。"
+    : "填写 Java 版服务器地址，不带端口时默认 25565。";
+  dom.mcSubmit.textContent = editing ? "保存" : "添加";
+  dom.mcFormError.textContent = "";
+  dom.mcName.value = editing ? server.name : "";
+  dom.mcAddr.value = editing ? server.address : "";
+  dom.mcName.focus();
+}
+
+function closeMCWizard() {
+  dom.mcWizardView.hidden = true;
+  if (S.mc.formMode === "edit" && S.mc.editId) {
+    openMCDetail(S.mc.editId);
+    return;
+  }
+  S.mc.forceList = true;
+  renderMCList();
+}
+
+async function submitMCForm(event) {
+  event.preventDefault();
+  dom.mcFormError.textContent = "";
+  const name = dom.mcName.value.trim();
+  const address = dom.mcAddr.value.trim();
+  if (!name) {
+    dom.mcFormError.textContent = "请填写服务器名称";
+    return;
+  }
+  if (!address) {
+    dom.mcFormError.textContent = "请填写主地址";
+    return;
+  }
+  const editing = S.mc.formMode === "edit" && S.mc.editId;
+  dom.mcSubmit.disabled = true;
+  try {
+    if (editing) {
+      await api(`/api/mc/servers/${encodeURIComponent(S.mc.editId)}/update`, {
+        method: "POST",
+        body: { name, address },
+      });
+      snack("服务器已更新");
+      openMCDetail(S.mc.editId);
+      return;
+    }
+    await api("/api/mc/servers", { method: "POST", body: { name, address } });
+    S.mc.forceList = false;
+    snack("服务器已添加");
+    await loadMCServers({ autoDetail: true });
+  } catch (err) {
+    dom.mcFormError.textContent = err.message;
+  } finally {
+    dom.mcSubmit.disabled = false;
+  }
+}
+
+function backToMCList() {
+  S.mc.forceList = true;
+  S.mc.currentId = null;
+  stopMCTimer();
+  renderMCList();
+}
+
+
 function openAdmin() {
   if (!S.authed) {
     showAuth(false);
     return;
   }
+  closeDrawer();
   clearDirty();
   S.adminOpen = true;
   dom.app.hidden = true;
@@ -1403,6 +2047,7 @@ function syncAdminControls() {
   if (!S.settings || !S.authed) return;
   dom.refreshRange.value = S.settings.refresh_seconds;
   dom.refreshOut.textContent = `${S.settings.refresh_seconds} 秒`;
+  dom.mcEnabled.checked = Boolean(S.settings.minecraft_enabled);
   setThemeSelection(S.settings.theme);
 
   const gpu = (S.caps && S.caps.gpu) || { supported: false, reason: "尚未检测" };
@@ -1612,6 +2257,7 @@ function collectSettings() {
     refresh_seconds: Number(dom.refreshRange.value),
     theme: currentThemeValue(),
     gpu_enabled: dom.gpuToggle.checked,
+    minecraft_enabled: dom.mcEnabled.checked,
     branding: {
       title: dom.brandTitle.value.trim() || "SysMon",
       palette: branding.palette,
@@ -1776,6 +2422,8 @@ function wireAdminEvents() {
     markDirty();
   });
 
+  dom.mcEnabled.addEventListener("change", () => markDirty());
+
   dom.refreshRange.addEventListener("input", () => {
     dom.refreshOut.textContent = `${dom.refreshRange.value} 秒`;
     markDirty();
@@ -1863,6 +2511,53 @@ function wireEvents() {
   dom.backBtn.addEventListener("click", () => closeAdmin(false));
   dom.saveBtn.addEventListener("click", saveSettings);
   dom.rescanBtn.addEventListener("click", rescanGpu);
+
+  dom.menuBtn.addEventListener("click", () => {
+    if (dom.navDrawer.classList.contains("open")) closeDrawer();
+    else openDrawer();
+  });
+  dom.drawerScrim.addEventListener("click", closeDrawer);
+  $$(".drawer-item").forEach((button) => {
+    button.addEventListener("click", () => {
+      closeDrawer();
+      if (button.dataset.nav === "mc") enterMC();
+      else showDashboard();
+    });
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeDrawer();
+  });
+
+  dom.mcAddBtn.addEventListener("click", openMCWizard);
+  dom.mcEmptyAdd.addEventListener("click", openMCWizard);
+  dom.mcEditBtn.addEventListener("click", () => {
+    if (S.mc.detail) openMCWizard("edit", S.mc.detail);
+  });
+  dom.mcViewToggle.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-mcview]");
+    if (button) setMCViewMode(button.dataset.mcview);
+  });
+  dom.mcBackBtn.addEventListener("click", backToMCList);
+  dom.mcCancel.addEventListener("click", closeMCWizard);
+  dom.mcForm.addEventListener("submit", submitMCForm);
+  dom.mcRanges.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-range]");
+    if (!button) return;
+    setMCRange(button.dataset.range);
+  });
+  dom.mcApplyRange.addEventListener("click", () => {
+    const from = parseStamp(dom.mcFrom.value);
+    const to = parseStamp(dom.mcTo.value);
+    if (from === null || to === null) {
+      dom.mcRangeError.textContent = "时间格式需为 yyyymmddhhmmss";
+      return;
+    }
+    if (to <= from) {
+      dom.mcRangeError.textContent = "结束时间必须晚于开始时间";
+      return;
+    }
+    loadMCHistory("custom", { from, to });
+  });
 
   dom.logoutBtn.addEventListener("click", async () => {
     try {

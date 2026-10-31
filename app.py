@@ -29,9 +29,10 @@ from core import auth  # noqa: E402
 from core.branding import BrandingStore  # noqa: E402
 from core.collectors import Collector, GpuProbe  # noqa: E402
 from core.config import ConfigError, Store  # noqa: E402
+from core.minecraft import MinecraftMonitor  # noqa: E402
 from core.web import AppContext, MonitorServer, make_handler  # noqa: E402
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -119,16 +120,19 @@ def main(argv=None) -> int:
         auth.remove_setup_token(data_dir / "setup-token.txt")
 
     collector.start()
+    minecraft = MinecraftMonitor(data_dir, store)
 
     ctx = AppContext(
         store=store,
         collector=collector,
         branding=BrandingStore(data_dir),
+        minecraft=minecraft,
         static_dir=BASE_DIR / "static",
         data_dir=data_dir,
         setup_token=setup_token,
         version=VERSION,
     )
+    minecraft.start()
     handler = make_handler(ctx)
     try:
         server = MonitorServer((args.host, args.port), handler)
@@ -155,6 +159,7 @@ def main(argv=None) -> int:
     finally:
         server.server_close()
         collector.stop()
+        minecraft.stop()
     return 0
 
 
