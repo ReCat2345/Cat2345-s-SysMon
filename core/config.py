@@ -8,6 +8,8 @@ config.json 结构：
       "refresh_seconds": 5,
       "theme": "auto",
       "gpu_enabled": false,
+      "minecraft_enabled": false,
+      "hide_device_name": false,
       "branding": {"title": "SysMon", "palette": "violet", "primary": "#6750A4", "wallpaper_opacity": 35},
       "modules": [{"id": "cpu", "visible": true, "chart": "gauge", "hardware": true}, ...]
   }
@@ -82,6 +84,7 @@ def default_settings(gpu_supported: bool) -> Dict[str, Any]:
         "theme": "auto",
         "gpu_enabled": gpu_on,
         "minecraft_enabled": False,
+        "hide_device_name": False,
         "branding": {
             "title": DEFAULT_TITLE,
             "palette": DEFAULT_PALETTE,
@@ -203,6 +206,7 @@ def normalize_settings(raw: Any, gpu_supported: bool, strict: bool = True) -> Di
 
     branding = _normalize_branding(raw.get("branding"), strict)
     minecraft_enabled = bool(raw.get("minecraft_enabled", False))
+    hide_device_name = bool(raw.get("hide_device_name", False))
 
     incoming = raw.get("modules", None)
     if incoming is None:
@@ -265,6 +269,7 @@ def normalize_settings(raw: Any, gpu_supported: bool, strict: bool = True) -> Di
         "theme": theme,
         "gpu_enabled": gpu_enabled,
         "minecraft_enabled": minecraft_enabled,
+        "hide_device_name": hide_device_name,
         "branding": branding,
         "modules": modules,
     }

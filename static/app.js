@@ -357,6 +357,7 @@ const dom = {
   connText: $("#connText"),
   refreshHint: $("#refreshHint"),
   themeBtn: $("#themeBtn"),
+  themeMenu: $("#themeMenu"),
   adminBtn: $("#adminBtn"),
   logoutBtn: $("#logoutBtn"),
   loginBtn: $("#loginBtn"),
@@ -377,10 +378,7 @@ const dom = {
   mcEmptyAdd: $("#mcEmptyAdd"),
   mcListView: $("#mcListView"),
   mcSummary: $("#mcSummary"),
-  mcListBody: $("#mcListBody"),
   mcCards: $("#mcCards"),
-  mcTableWrap: $("#mcTableWrap"),
-  mcViewToggle: $("#mcViewToggle"),
   mcDetailView: $("#mcDetailView"),
   mcBackBtn: $("#mcBackBtn"),
   mcEditBtn: $("#mcEditBtn"),
@@ -414,6 +412,7 @@ const dom = {
   mcCancel: $("#mcCancel"),
   mcSubmit: $("#mcSubmit"),
   mcEnabled: $("#mcEnabled"),
+  hideDeviceName: $("#hideDeviceName"),
 
   brandTitle: $("#brandTitle"),
   titleCount: $("#titleCount"),
@@ -500,9 +499,9 @@ const S = {
     forceList: false,
     timer: null,
     loading: false,
-    viewMode: "grid",
     formMode: "add",
     editId: null,
+    motdTimer: null,
   },
 };
 
@@ -549,11 +548,80 @@ function resolveTheme(mode) {
 
 function applyTheme(mode) {
   document.documentElement.dataset.theme = resolveTheme(mode);
+  updateThemeMenuActive(mode);
   applyPalette();
 }
 
+const THEME_STORAGE_KEY = "sysmon-theme";
+
+function storedTheme() {
+  try {
+    const value = localStorage.getItem(THEME_STORAGE_KEY);
+    return value === "auto" || value === "light" || value === "dark" ? value : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function activeThemeMode() {
+  if (!S.authed) return storedTheme() || (S.settings && S.settings.theme) || "auto";
+  return (S.settings && S.settings.theme) || "auto";
+}
+
+function updateThemeMenuActive(mode) {
+  $$("#themeMenu [data-theme-choice]").forEach((btn) => {
+    const active = btn.dataset.themeChoice === mode;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-checked", String(active));
+  });
+}
+
+function closeThemeMenu() {
+  dom.themeMenu.hidden = true;
+  dom.themeBtn.setAttribute("aria-expanded", "false");
+}
+
+function toggleThemeMenu() {
+  const open = dom.themeMenu.hidden;
+  dom.themeMenu.hidden = !open;
+  dom.themeBtn.setAttribute("aria-expanded", String(open));
+  if (open) updateThemeMenuActive(activeThemeMode());
+}
+
+async function chooseTheme(mode) {
+  if (!["auto", "light", "dark"].includes(mode)) return;
+  closeThemeMenu();
+  applyTheme(mode);
+  redrawAll();
+  if (!S.authed) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, mode);
+    } catch (err) {
+      /* 隐私模式下忽略存储异常 */
+    }
+    updateThemeMenuActive(mode);
+    return;
+  }
+  if (!S.settings) return;
+  S.settings.theme = mode;
+  setThemeSelection(mode);
+  try {
+    const data = await api("/api/config", {
+      method: "POST",
+      body: { settings: { ...S.settings, gpu_enabled: S.settings.gpu_enabled } },
+    });
+    S.settings = data.settings;
+    applyTheme(activeThemeMode());
+    updateChrome();
+    renderMeta();
+  } catch (err) {
+    if (err.status === 401) handleUnauthorized();
+    else snack(err.message, true);
+  }
+}
+
 darkQuery.addEventListener("change", () => {
-  if (S.settings && S.settings.theme === "auto") {
+  if (activeThemeMode() === "auto") {
     applyTheme("auto");
     redrawAll();
   }
@@ -563,6 +631,7 @@ function setThemeSelection(mode) {
   $$("#themeSeg button").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.themeValue === mode);
   });
+  updateThemeMenuActive(mode);
 }
 
 function currentThemeValue() {
@@ -584,6 +653,8 @@ function snack(message, isError = false) {
 function showAuth(needsSetup) {
   S.authed = false;
   stopPolling();
+  stopMOTDTimer();
+  closeThemeMenu();
   closeDrawer();
   S.view = "dashboard";
   dom.boot.hidden = true;
@@ -705,14 +776,13 @@ function enterApp(state) {
   dom.admin.hidden = true;
   dom.app.hidden = false;
 
-  applyTheme(S.settings.theme);
+  applyTheme(activeThemeMode());
   applyBranding();
   updateChrome();
   renderDashboard(true);
   if (S.authed) renderAdmin();
   renderMeta();
   S.view = "dashboard";
-  S.mc.viewMode = mcStoredView();
   showDashboard();
   startPolling();
 }
@@ -734,8 +804,13 @@ function updateAuthChrome() {
 function updateChrome() {
   if (!S.settings) return;
   const host = S.host || {};
+  const hideDevice = Boolean(S.settings.hide_device_name);
   if (host.hostname) {
-    dom.hostLabel.textContent = `${host.hostname} · ${host.cores || "?"} 核`;
+    dom.hostLabel.textContent = host.hostname;
+    dom.hostLabel.hidden = hideDevice;
+  } else {
+    dom.hostLabel.textContent = "";
+    dom.hostLabel.hidden = true;
   }
   dom.versionLabel.textContent = `v${S.version || ""}`;
   dom.aboutVersion.textContent = `v${S.version || ""}`;
@@ -756,7 +831,11 @@ function renderMeta() {
   if (!m) return;
   const host = S.host || {};
   dom.lastUpdate.textContent = m.ts ? `更新于 ${fmtClock(m.ts)}` : "—";
-  dom.pageSub.textContent = `${host.os || "本机"} · ${host.hostname || ""} · 已运行 ${fmtUptime(m.uptime)}`;
+  const hideDevice = Boolean(S.settings && S.settings.hide_device_name);
+  const parts = [host.os || "本机"];
+  if (!hideDevice && host.hostname) parts.push(host.hostname);
+  parts.push(`已运行 ${fmtUptime(m.uptime)}`);
+  dom.pageSub.textContent = parts.join(" · ");
   dom.aboutUptime.textContent = fmtUptime(m.uptime);
 }
 
@@ -805,7 +884,7 @@ async function poll() {
     renderMeta();
 
     if (changed) {
-      applyTheme(S.settings.theme);
+      applyTheme(activeThemeMode());
       applyBranding();
       updateChrome();
       renderDashboard(true);
@@ -1444,12 +1523,14 @@ function updateNavVisibility() {
 function showDashboard() {
   S.view = "dashboard";
   stopMCTimer();
+  stopMOTDTimer();
   dom.dashboardPage.hidden = false;
   dom.mcPage.hidden = true;
   updateDrawerActive();
 }
 
 function hideMCViews() {
+  stopMOTDTimer();
   [dom.mcEmpty, dom.mcListView, dom.mcDetailView, dom.mcWizardView].forEach((node) => {
     node.hidden = true;
   });
@@ -1505,33 +1586,6 @@ async function loadMCServers({ autoDetail = false, silent = false } = {}) {
   }
 }
 
-function mcStoredView() {
-  try {
-    return localStorage.getItem("sysmon-mc-view") === "list" ? "list" : "grid";
-  } catch (err) {
-    return "grid";
-  }
-}
-
-function applyMCViewMode() {
-  const grid = S.mc.viewMode !== "list";
-  dom.mcCards.hidden = !grid;
-  dom.mcTableWrap.hidden = grid;
-  $$("#mcViewToggle button").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.mcview === S.mc.viewMode);
-  });
-}
-
-function setMCViewMode(mode) {
-  S.mc.viewMode = mode === "list" ? "list" : "grid";
-  try {
-    localStorage.setItem("sysmon-mc-view", S.mc.viewMode);
-  } catch (err) {
-    /* 忽略隐私模式下的存储异常 */
-  }
-  applyMCViewMode();
-}
-
 function mcPlayersText(server) {
   const players = server.players || {};
   return `${players.online || 0}/${players.max || 0}`;
@@ -1564,7 +1618,7 @@ function buildMCCard(server) {
   card.querySelector('[data-ref="latency"]').textContent = mcLatencyText(server);
   card.querySelector('[data-ref="version"]').textContent = server.version || "—";
   card.querySelector('[data-ref="players"]').textContent = mcPlayersText(server);
-  card.querySelector(".mc-card-motd").textContent = server.motd || "—";
+  renderMOTD(card.querySelector(".mc-card-motd"), server.motd_segments, server.motd, { animate: false });
   const state = card.querySelector(".mc-state");
   state.textContent = server.online ? "在线" : "离线";
   state.classList.add(server.online ? "online" : "offline");
@@ -1576,36 +1630,6 @@ function buildMCCard(server) {
     }
   });
   return card;
-}
-
-function buildMCTableRow(server) {
-  const row = document.createElement("tr");
-  row.dataset.id = server.id;
-  row.tabIndex = 0;
-  row.innerHTML = `<td><strong></strong></td>
-      <td><span class="mc-state"></span></td>
-      <td class="mono"></td>
-      <td></td>
-      <td></td>
-      <td></td>
-      <td class="mc-motd-cell"><span class="mc-motd-text"></span></td>`;
-  row.querySelector("strong").textContent = server.name;
-  const state = row.querySelector(".mc-state");
-  state.textContent = server.online ? "在线" : "离线";
-  state.classList.add(server.online ? "online" : "offline");
-  const cells = row.querySelectorAll("td");
-  cells[2].textContent = server.address;
-  cells[3].textContent = mcLatencyText(server);
-  cells[4].textContent = server.version || "—";
-  cells[5].textContent = mcPlayersText(server);
-  const motdText = row.querySelector(".mc-motd-text");
-  motdText.textContent = server.motd || "—";
-  cells[6].title = server.motd || "";
-  row.addEventListener("click", () => openMCDetail(server.id));
-  row.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") openMCDetail(server.id);
-  });
-  return row;
 }
 
 function renderMCList() {
@@ -1622,12 +1646,9 @@ function renderMCList() {
   dom.mcListView.hidden = false;
   dom.mcSummary.textContent = `当前有 ${S.mc.servers.length} 个服务器`;
   dom.mcCards.innerHTML = "";
-  dom.mcListBody.innerHTML = "";
   S.mc.servers.forEach((server) => {
     dom.mcCards.appendChild(buildMCCard(server));
-    dom.mcListBody.appendChild(buildMCTableRow(server));
   });
-  applyMCViewMode();
   startMCTimer("list");
 }
 
@@ -1674,6 +1695,75 @@ async function refreshMCDetail(resetHistory) {
   }
 }
 
+function stopMOTDTimer() {
+  if (S.mc.motdTimer) {
+    clearInterval(S.mc.motdTimer);
+    S.mc.motdTimer = null;
+  }
+}
+
+function mcRandomChar(ch) {
+  if (!ch || /\s/.test(ch)) return ch;
+  if (/[A-Z]/.test(ch)) return "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 26)];
+  if (/[a-z]/.test(ch)) return "abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 26)];
+  if (/[0-9]/.test(ch)) return "0123456789"[Math.floor(Math.random() * 10)];
+  if (/[\u3400-\u9fff]/.test(ch)) return ch;
+  const pool = "!@#$%^&*()_+-=[]{};:,.<>?/";
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function renderMOTD(container, segments, plain, { animate = true } = {}) {
+  if (animate) stopMOTDTimer();
+  container.innerHTML = "";
+  if (!Array.isArray(segments) || !segments.length) {
+    container.textContent = plain || "—";
+    return;
+  }
+  const obfuscated = [];
+  let hasText = false;
+  segments.forEach((segment) => {
+    if (!segment || typeof segment.text !== "string" || !segment.text) return;
+    hasText = true;
+    const span = document.createElement("span");
+    span.className = "mc-motd-seg";
+    span.textContent = segment.text;
+    if (typeof segment.color === "string" && /^#[0-9a-fA-F]{6}$/.test(segment.color)) {
+      span.style.color = segment.color;
+    }
+    if (segment.bold) span.style.fontWeight = "700";
+    if (segment.italic) span.style.fontStyle = "italic";
+    const decorations = [];
+    if (segment.underlined) decorations.push("underline");
+    if (segment.strikethrough) decorations.push("line-through");
+    if (decorations.length) span.style.textDecoration = decorations.join(" ");
+    if (segment.obfuscated) {
+      span.classList.add("mc-motd-obfuscated");
+      span.dataset.text = segment.text;
+      obfuscated.push(span);
+    }
+    container.appendChild(span);
+  });
+  if (!hasText) {
+    container.textContent = plain || "—";
+    return;
+  }
+  if (animate && obfuscated.length) {
+    const scramble = () => {
+      obfuscated.forEach((node) => {
+        const source = node.dataset.text || "";
+        node.textContent = Array.from(source).map(mcRandomChar).join("");
+      });
+    };
+    scramble();
+    S.mc.motdTimer = setInterval(scramble, 160);
+  }
+}
+
+function isAnonymousPlayer(name) {
+  const value = String(name || "").trim().toLowerCase();
+  return !value || value === "anonymous player" || value === "anonymous" || value === "匿名玩家";
+}
+
 function renderMCDetail(server) {
   dom.mcDetailName.textContent = server.name;
   dom.mcDetailAddr.textContent = server.address;
@@ -1685,7 +1775,7 @@ function renderMCDetail(server) {
   dom.mcLatency.textContent = typeof server.latency_ms === "number" ? `${server.latency_ms} ms` : "—";
   const players = server.players || { online: 0, max: 0, sample: [] };
   dom.mcPlayersCount.textContent = `${players.online || 0} / ${players.max || 0}`;
-  dom.mcMotd.textContent = server.motd || "—";
+  renderMOTD(dom.mcMotd, server.motd_segments, server.motd);
   dom.mcPlayerHint.textContent = server.online
     ? `${players.online || 0} / ${players.max || 0} 在线`
     : server.error || "服务器离线";
@@ -1700,14 +1790,32 @@ function renderMCDetail(server) {
     return;
   }
   const sample = players.sample || [];
+  const onlineCount = Number(players.online) || 0;
   if (!sample.length) {
     const note = document.createElement("p");
     note.className = "muted small";
-    note.textContent = "服务器未公开在线玩家列表（可能 hide-online-players=true）";
+    note.textContent =
+      onlineCount > 0
+        ? "服务器未公开在线玩家列表（可能 hide-online-players=true）"
+        : "暂无在线玩家";
     list.appendChild(note);
     return;
   }
+  const anonymousCount = sample.filter((player) => isAnonymousPlayer(player.name)).length;
+  let anonymousRendered = false;
   sample.forEach((player) => {
+    if (isAnonymousPlayer(player.name)) {
+      if (anonymousRendered) return;
+      anonymousRendered = true;
+      const chip = document.createElement("span");
+      chip.className = "mc-player anonymous";
+      const name = document.createElement("span");
+      name.textContent =
+        anonymousCount > 1 ? `Anonymous Player x${anonymousCount}` : "Anonymous Player";
+      chip.appendChild(name);
+      list.appendChild(chip);
+      return;
+    }
     const chip = document.createElement("span");
     chip.className = "mc-player";
     const avatar = document.createElement("img");
@@ -1974,6 +2082,8 @@ function openAdmin() {
     return;
   }
   closeDrawer();
+  closeThemeMenu();
+  stopMOTDTimer();
   clearDirty();
   S.adminOpen = true;
   dom.app.hidden = true;
@@ -2048,6 +2158,7 @@ function syncAdminControls() {
   dom.refreshRange.value = S.settings.refresh_seconds;
   dom.refreshOut.textContent = `${S.settings.refresh_seconds} 秒`;
   dom.mcEnabled.checked = Boolean(S.settings.minecraft_enabled);
+  dom.hideDeviceName.checked = Boolean(S.settings.hide_device_name);
   setThemeSelection(S.settings.theme);
 
   const gpu = (S.caps && S.caps.gpu) || { supported: false, reason: "尚未检测" };
@@ -2258,6 +2369,7 @@ function collectSettings() {
     theme: currentThemeValue(),
     gpu_enabled: dom.gpuToggle.checked,
     minecraft_enabled: dom.mcEnabled.checked,
+    hide_device_name: dom.hideDeviceName.checked,
     branding: {
       title: dom.brandTitle.value.trim() || "SysMon",
       palette: branding.palette,
@@ -2282,10 +2394,11 @@ async function saveSettings() {
     const data = await api("/api/config", { method: "POST", body: { settings: collectSettings() } });
     S.settings = data.settings;
     if (data.capabilities) S.caps = data.capabilities;
-    applyTheme(S.settings.theme);
+    applyTheme(activeThemeMode());
     applyBranding();
     clearDirty();
     updateChrome();
+    renderMeta();
     renderAdmin();
     renderDashboard(true);
     startPolling();
@@ -2423,6 +2536,7 @@ function wireAdminEvents() {
   });
 
   dom.mcEnabled.addEventListener("change", () => markDirty());
+  dom.hideDeviceName.addEventListener("change", () => markDirty());
 
   dom.refreshRange.addEventListener("input", () => {
     dom.refreshOut.textContent = `${dom.refreshRange.value} 秒`;
@@ -2525,17 +2639,16 @@ function wireEvents() {
     });
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeDrawer();
+    if (event.key === "Escape") {
+      closeDrawer();
+      closeThemeMenu();
+    }
   });
 
   dom.mcAddBtn.addEventListener("click", openMCWizard);
   dom.mcEmptyAdd.addEventListener("click", openMCWizard);
   dom.mcEditBtn.addEventListener("click", () => {
     if (S.mc.detail) openMCWizard("edit", S.mc.detail);
-  });
-  dom.mcViewToggle.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-mcview]");
-    if (button) setMCViewMode(button.dataset.mcview);
   });
   dom.mcBackBtn.addEventListener("click", backToMCList);
   dom.mcCancel.addEventListener("click", closeMCWizard);
@@ -2574,22 +2687,23 @@ function wireEvents() {
     }
   });
 
-  dom.themeBtn.addEventListener("click", async () => {
-    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-    applyTheme(next);
-    redrawAll();
-    if (!S.settings || !S.authed) return; // 访客只做本地切换，不改服务端设置
-    S.settings.theme = next;
-    setThemeSelection(next);
-    try {
-      const data = await api("/api/config", {
-        method: "POST",
-        body: { settings: { ...S.settings, gpu_enabled: S.settings.gpu_enabled } },
-      });
-      S.settings = data.settings;
-      updateChrome();
-    } catch (err) {
-      if (err.status === 401) handleUnauthorized();
+  dom.themeBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleThemeMenu();
+  });
+  dom.themeMenu.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-theme-choice]");
+    if (!button) return;
+    event.stopPropagation();
+    chooseTheme(button.dataset.themeChoice);
+  });
+  document.addEventListener("click", (event) => {
+    if (
+      !dom.themeMenu.hidden &&
+      !event.target.closest("#themeMenu") &&
+      !event.target.closest("#themeBtn")
+    ) {
+      closeThemeMenu();
     }
   });
 

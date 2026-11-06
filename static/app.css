@@ -262,6 +262,23 @@ code{
 .top-brand-text{display:flex;flex-direction:column;line-height:1.25;min-width:0}
 .top-brand-text .brand-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
 .top-actions{margin-left:auto;display:flex;align-items:center;gap:4px}
+.theme-menu{
+  position:absolute;top:calc(100% + 6px);right:24px;z-index:30;
+  min-width:152px;padding:6px;border-radius:14px;
+  background:var(--md-surface-container-high);
+  border:1px solid var(--md-outline-variant);
+  box-shadow:0 8px 24px rgba(0,0,0,.18);
+}
+.theme-menu button{
+  display:flex;align-items:center;gap:8px;width:100%;
+  height:38px;padding:0 12px;border-radius:10px;
+  color:var(--md-on-surface);font-size:13px;text-align:left;
+  background:transparent;
+}
+.theme-menu button:hover{background:var(--md-surface-container)}
+.theme-menu button.active{background:var(--md-secondary-container);color:var(--md-on-secondary-container)}
+.theme-menu .check{margin-left:auto;opacity:0;font-size:12px}
+.theme-menu button.active .check{opacity:1}
 .bar-title{font-size:20px;line-height:28px;font-weight:500;letter-spacing:0}
 
 .status{
@@ -620,10 +637,7 @@ body.has-wallpaper .auth-card{background:color-mix(in srgb, var(--md-surface-con
 .drawer-item.active{background:var(--md-secondary-container);color:var(--md-on-secondary-container);font-weight:500}
 
 /* ---------------- MC 服务器 ---------------- */
-.mc-list-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-.mc-summary{font-size:13px;color:var(--md-on-surface-variant);margin:0}
-.mc-view-toggle{height:36px}
-.mc-view-toggle button{padding:0 14px;font-size:12px}
+.mc-summary{font-size:13px;color:var(--md-on-surface-variant);margin:0 0 12px}
 .mc-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px}
 .mc-card{
   display:flex;flex-direction:column;
@@ -658,22 +672,9 @@ body.has-wallpaper .auth-card{background:color-mix(in srgb, var(--md-surface-con
   font-size:12px;line-height:17px;color:var(--md-on-surface-variant);
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
 }
+.mc-card-motd .mc-motd-seg{white-space:pre-wrap}
 .mc-detail-actions{display:flex;align-items:center;gap:10px;flex:none}
 
-.mc-table-wrap{overflow:hidden}
-.mc-table{width:100%;border-collapse:collapse;font-size:13px;white-space:nowrap}
-.mc-table th{
-  text-align:left;padding:10px 14px;
-  font-size:11px;font-weight:500;letter-spacing:.4px;
-  color:var(--md-on-surface-variant);
-  background:var(--md-surface-container-low);
-  border-bottom:1px solid var(--md-outline-variant);
-}
-.mc-table td{padding:10px 14px;border-bottom:1px solid var(--md-outline-variant)}
-.mc-table tbody tr{cursor:pointer}
-.mc-table tbody tr:hover{background:var(--md-surface-container-high)}
-.mc-table td.mc-motd-cell{max-width:260px}
-.mc-motd-text{display:block;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mc-state{
   display:inline-flex;align-items:center;gap:6px;
   padding:3px 10px;border-radius:12px;
@@ -695,7 +696,9 @@ body.has-wallpaper .auth-card{background:color-mix(in srgb, var(--md-surface-con
 .mc-facts .full{grid-column:1/-1}
 .mc-facts dt{font-size:11px;line-height:16px;letter-spacing:.5px;color:var(--md-on-surface-variant)}
 .mc-facts dd{margin:2px 0 0;font-size:14px;line-height:20px;overflow-wrap:anywhere}
-.mc-motd{white-space:pre-wrap}
+.mc-motd{white-space:pre-wrap;word-break:break-word;line-height:1.65}
+.mc-motd-seg{white-space:pre-wrap}
+.mc-motd-obfuscated{font-variant-ligatures:none}
 .mc-players{display:flex;flex-wrap:wrap;gap:8px}
 .mc-player{
   display:flex;align-items:center;gap:8px;
@@ -708,6 +711,7 @@ body.has-wallpaper .auth-card{background:color-mix(in srgb, var(--md-surface-con
   background:var(--md-surface-container-high);
   image-rendering:pixelated;
 }
+.mc-player.anonymous{padding-left:10px;color:var(--md-on-surface-variant)}
 
 .mc-ranges{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .mc-range{
@@ -789,10 +793,9 @@ body.has-wallpaper .auth-card{background:color-mix(in srgb, var(--md-surface-con
   .dirty{display:none}
   .banner{flex-wrap:wrap;gap:12px}
   .mc-cards{grid-template-columns:1fr}
-  .mc-table th,.mc-table td{padding:9px 10px}
-  .mc-table th:nth-child(7),.mc-table td:nth-child(7){display:none}
   .mc-detail-actions{flex-direction:column;align-items:flex-end}
   #mcPage .page-meta{display:flex}
+  .theme-menu{right:12px}
   .section{padding:16px 16px 20px}
   .module-row{display:flex;flex-wrap:wrap;align-items:center}
   .switch-placeholder{display:none}

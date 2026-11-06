@@ -30,7 +30,51 @@ PING_TIMEOUT = 4.0
 HISTORY_KEEP = 8 * 24 * 3600
 MAX_QUERY_RANGE = 30 * 24 * 3600
 
-MOTD_CODE_RE = re.compile(r"§[0-9A-FK-ORa-fk-or]")
+MOTD_COLORS: Dict[str, str] = {
+    "0": "#000000",
+    "1": "#0000AA",
+    "2": "#00AA00",
+    "3": "#00AAAA",
+    "4": "#AA0000",
+    "5": "#AA00AA",
+    "6": "#FFAA00",
+    "7": "#AAAAAA",
+    "8": "#555555",
+    "9": "#5555FF",
+    "a": "#55FF55",
+    "b": "#55FFFF",
+    "c": "#FF5555",
+    "d": "#FF55FF",
+    "e": "#FFFF55",
+    "f": "#FFFFFF",
+}
+MOTD_COLOR_NAMES: Dict[str, str] = {
+    "black": "#000000",
+    "dark_blue": "#0000AA",
+    "dark_green": "#00AA00",
+    "dark_aqua": "#00AAAA",
+    "dark_red": "#AA0000",
+    "dark_purple": "#AA00AA",
+    "gold": "#FFAA00",
+    "gray": "#AAAAAA",
+    "dark_gray": "#555555",
+    "blue": "#5555FF",
+    "green": "#55FF55",
+    "aqua": "#55FFFF",
+    "red": "#FF5555",
+    "light_purple": "#FF55FF",
+    "yellow": "#FFFF55",
+    "white": "#FFFFFF",
+}
+MOTD_FORMATS: Dict[str, str] = {
+    "k": "obfuscated",
+    "l": "bold",
+    "m": "strikethrough",
+    "n": "underlined",
+    "o": "italic",
+}
+MOTD_STYLE_KEYS = ("bold", "italic", "underlined", "strikethrough", "obfuscated")
+MOTD_HEX_RE = re.compile(r"^[0-9A-F]{6}$")
 PLAYER_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 # 1x1 透明 PNG，仅当 static/steve.png 缺失时兜底
@@ -346,27 +390,199 @@ def format_address(host: str, port: int) -> str:
     return f"{host}:{port}" if port != DEFAULT_PORT else host
 
 
-# ------------------------------------------------------------------ SLP
+# ------------------------------------------------------------------ MOTD 格式化
+def _motd_style(color: Optional[str] = None) -> Dict[str, Any]:
+    style: Dict[str, Any] = {"color": color}
+    for key in MOTD_STYLE_KEYS:
+        style[key] = False
+    return style
+
+
+def _motd_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def _motd_color(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text.startswith("#") and MOTD_HEX_RE.match(text[1:].upper()):
+        return "#" + text[1:].upper()
+    return MOTD_COLOR_NAMES.get(text.lower())
+
+
+def _motd_color_code(color: str) -> str:
+    for code, hex_value in MOTD_COLORS.items():
+        if hex_value == color.upper():
+            return f"§{code}"
+    return f"§#{color.lstrip('#').upper()}"
+
+
+def _motd_style_prefix(style: Dict[str, Any]) -> str:
+    parts = ["§r"]
+    color = style.get("color")
+    if color:
+        parts.append(_motd_color_code(str(color)))
+    for key, code in (
+        ("obfuscated", "k"),
+        ("bold", "l"),
+        ("strikethrough", "m"),
+        ("underlined", "n"),
+        ("italic", "o"),
+    ):
+        if style.get(key):
+            parts.append(f"§{code}")
+    return "".join(parts)
+
+
+def _component_to_legacy(node: Any, inherited: Dict[str, Any]) -> str:
+    """把 JSON 文本组件转换成带 § 代码的字符串，便于统一解析。"""
+    if isinstance(node, str):
+        return _motd_style_prefix(inherited) + node
+    if isinstance(node, list):
+        return "".join(_component_to_legacy(item, inherited) for item in node)
+    if not isinstance(node, dict):
+        return ""
+    style = dict(inherited)
+    if "color" in node:
+        color = _motd_color(node.get("color"))
+        raw_color = str(node.get("color") or "").strip().lower()
+        if color:
+            style["color"] = color
+        elif raw_color == "reset":
+            style["color"] = None
+    for key in MOTD_STYLE_KEYS:
+        if key in node:
+            style[key] = _motd_bool(node.get(key))
+    text = node.get("text")
+    text = text if isinstance(text, str) else ""
+    out = _motd_style_prefix(style) + text
+    extra = node.get("extra")
+    if isinstance(extra, list):
+        for item in extra:
+            out += _component_to_legacy(item, style)
+    elif extra is not None:
+        out += _component_to_legacy(extra, style)
+    return out
+
+
+def _to_legacy_motd(description: Any) -> str:
+    if isinstance(description, str):
+        return description
+    return _component_to_legacy(description, _motd_style())
+
+
+def _parse_motd_codes(text: str) -> List[Dict[str, Any]]:
+    """解析 § / & 格式代码，输出带样式和 HEX 颜色的片段。"""
+    segments: List[Dict[str, Any]] = []
+    buffer: List[str] = []
+    style = _motd_style()
+
+    def flush() -> None:
+        if not buffer:
+            return
+        chunk = "".join(buffer)
+        buffer.clear()
+        if chunk:
+            segments.append(
+                {
+                    "text": chunk,
+                    "color": style.get("color"),
+                    **{key: bool(style.get(key)) for key in MOTD_STYLE_KEYS},
+                }
+            )
+
+    i = 0
+    length = len(text)
+    while i < length:
+        char = text[i]
+        if char not in ("§", "&"):
+            buffer.append(char)
+            i += 1
+            continue
+
+        # && / §§ 作为转义后的字面符号
+        if i + 1 < length and text[i + 1] == char:
+            buffer.append(char)
+            i += 2
+            continue
+
+        # &#RRGGBB 或 §#RRGGBB
+        if i + 1 < length and text[i + 1] == "#":
+            digits = text[i + 2 : i + 8]
+            if len(digits) == 6 and MOTD_HEX_RE.match(digits.upper()):
+                flush()
+                style = _motd_style("#" + digits.upper())
+                i += 8
+                continue
+
+        if i + 1 >= length:
+            buffer.append(char)
+            i += 1
+            continue
+
+        code = text[i + 1].lower()
+
+        # §x§R§R§G§G§B§B 形式的原版 HEX
+        if code == "x":
+            j = i + 2
+            digits: List[str] = []
+            valid = True
+            for _ in range(6):
+                if j + 1 >= length or text[j] != char:
+                    valid = False
+                    break
+                digit = text[j + 1].lower()
+                if digit not in "0123456789abcdef":
+                    valid = False
+                    break
+                digits.append(digit)
+                j += 2
+            if valid:
+                flush()
+                style = _motd_style("#" + "".join(digits).upper())
+                i = j
+                continue
+
+        if code in MOTD_COLORS:
+            # Java 版规则：颜色代码会结束之前的格式，格式代码要放在颜色之后
+            flush()
+            style = _motd_style(MOTD_COLORS[code])
+            i += 2
+            continue
+
+        if code in MOTD_FORMATS:
+            flush()
+            style[MOTD_FORMATS[code]] = True
+            i += 2
+            continue
+
+        if code == "r":
+            flush()
+            style = _motd_style()
+            i += 2
+            continue
+
+        # 不是有效代码：保留前缀字符，不吞掉后面的普通文本
+        buffer.append(char)
+        i += 1
+
+    flush()
+    return segments
+
+
+def _parse_motd(description: Any) -> Tuple[str, List[Dict[str, Any]]]:
+    segments = _parse_motd_codes(_to_legacy_motd(description))
+    text = "".join(segment["text"] for segment in segments)
+    plain = " ".join(text.replace("\r", "\n").split())
+    return plain, segments
+
+
 def _flatten_motd(description: Any) -> str:
-    parts: List[str] = []
-
-    def walk(node: Any) -> None:
-        if isinstance(node, str):
-            parts.append(node)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-        elif isinstance(node, dict):
-            text = node.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-            for extra in node.get("extra") or []:
-                walk(extra)
-
-    walk(description)
-    motd = "".join(parts)
-    motd = MOTD_CODE_RE.sub("", motd)
-    return " ".join(motd.replace("\r", "\n").split())
+    plain, _segments = _parse_motd(description)
+    return plain
 
 
 def ping_server(host: str, port: int = DEFAULT_PORT, timeout: float = PING_TIMEOUT) -> Dict[str, Any]:
@@ -407,6 +623,7 @@ def ping_server(host: str, port: int = DEFAULT_PORT, timeout: float = PING_TIMEO
 
     version = payload.get("version") or {}
     players = payload.get("players") or {}
+    motd, motd_segments = _parse_motd(payload.get("description"))
     sample = []
     for item in players.get("sample") or []:
         if not isinstance(item, dict):
@@ -424,7 +641,8 @@ def ping_server(host: str, port: int = DEFAULT_PORT, timeout: float = PING_TIMEO
             "max": int(players.get("max") or 0),
             "sample": sample,
         },
-        "motd": _flatten_motd(payload.get("description")),
+        "motd": motd,
+        "motd_segments": motd_segments,
         "error": "",
         "checked_at": int(time.time()),
     }
@@ -625,6 +843,7 @@ class MinecraftMonitor:
             "protocol": None,
             "players": {"online": 0, "max": 0, "sample": []},
             "motd": "",
+            "motd_segments": [],
             "checked_at": 0,
             "error": "尚未检测",
         }
@@ -763,7 +982,7 @@ class MinecraftMonitor:
         try:
             request = urllib.request.Request(
                 "https://api.mojang.com/users/profiles/minecraft/" + urllib.parse.quote(name),
-                headers={"User-Agent": "SysMon/1.4.1"},
+                headers={"User-Agent": "SysMon/1.5.0"},
             )
             with urllib.request.urlopen(request, timeout=4) as response:
                 payload = json.loads(response.read().decode("utf-8"))
@@ -777,7 +996,7 @@ class MinecraftMonitor:
             try:
                 request = urllib.request.Request(
                     f"https://mc-heads.net/avatar/{uuid_value}/64",
-                    headers={"User-Agent": "SysMon/1.4.1"},
+                    headers={"User-Agent": "SysMon/1.5.0"},
                 )
                 with urllib.request.urlopen(request, timeout=5) as response:
                     image = response.read()
